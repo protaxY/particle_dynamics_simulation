@@ -1,0 +1,1 @@
+python train.py --env DustBox --num_workers 8
