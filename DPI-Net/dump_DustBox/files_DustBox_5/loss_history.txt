@@ -1,0 +1,14 @@
+train [0/1000] Loss: 0.0399, Best valid: inf, Learning rate: 0.000100 
+valid [0/1000] Loss: 0.0367, Best valid: inf, Learning rate: 0.000100 
+train [1/1000] Loss: 0.0277, Best valid: 0.0367, Learning rate: 0.000100 
+valid [1/1000] Loss: 0.0214, Best valid: 0.0367, Learning rate: 0.000100 
+train [2/1000] Loss: 0.0250, Best valid: 0.0214, Learning rate: 0.000100 
+valid [2/1000] Loss: 0.0194, Best valid: 0.0214, Learning rate: 0.000100 
+train [3/1000] Loss: 0.0241, Best valid: 0.0194, Learning rate: 0.000100 
+valid [3/1000] Loss: 0.0220, Best valid: 0.0194, Learning rate: 0.000100 
+train [4/1000] Loss: 0.0236, Best valid: 0.0194, Learning rate: 0.000100 
+valid [4/1000] Loss: 0.0211, Best valid: 0.0194, Learning rate: 0.000100 
+train [5/1000] Loss: 0.0233, Best valid: 0.0194, Learning rate: 0.000100 
+valid [5/1000] Loss: 0.0232, Best valid: 0.0194, Learning rate: 0.000100 
+train [6/1000] Loss: 0.0227, Best valid: 0.0194, Learning rate: 0.000100 
+valid [6/1000] Loss: 0.0280, Best valid: 0.0194, Learning rate: 0.000100 

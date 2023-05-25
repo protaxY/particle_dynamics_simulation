@@ -5,9 +5,6 @@ import time
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
-import json
-
-import multiprocessing as mp
 
 import torch
 import torch.nn as nn
@@ -18,10 +15,9 @@ from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from models import DPINet
-from data import PhysicsFleXDataset, collate_fn
+from data import PhysicsFleXDataset, collate_fn, normalize, denormalize
 
 from utils import count_parameters
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--pstep', type=int, default=2)
@@ -29,9 +25,9 @@ parser.add_argument('--n_rollout', type=int, default=0)
 parser.add_argument('--time_step', type=int, default=0)
 parser.add_argument('--time_step_clip', type=int, default=0)
 parser.add_argument('--dt', type=float, default=1./60.)
-parser.add_argument('--nf_relation', type=int, default=300)
-parser.add_argument('--nf_particle', type=int, default=200)
-parser.add_argument('--nf_effect', type=int, default=200)
+parser.add_argument('--nf_relation', type=int, default=400)
+parser.add_argument('--nf_particle', type=int, default=300)
+parser.add_argument('--nf_effect', type=int, default=300)
 parser.add_argument('--env', default='')
 parser.add_argument('--train_valid_ratio', type=float, default=0.9)
 parser.add_argument('--outf', default='files')
@@ -75,7 +71,6 @@ parser.add_argument('--relation_dim', type=int, default=0)
 args = parser.parse_args()
 
 phases_dict = dict()
-
 
 if args.env == 'FluidFall':
     args.n_rollout = 3000
@@ -212,11 +207,10 @@ elif args.env == 'RiceGrip':
     args.outf = 'dump_RiceGrip/' + args.outf
 
 elif args.env == 'DustBox':
-    # args.batch_size = 16
-    
+    # args.batch_size = 1
     # используется для генерации
-    args.n_rollout = 20
-    args.n_his = 5
+    args.n_rollout = 400
+    args.n_his = 10
 
     # object states:
     # [x, y, xdot, ydot]
@@ -241,10 +235,10 @@ elif args.env == 'DustBox':
     # ???
     args.n_stages = 1
 
-    args.neighbor_radius = 2.5
+    args.neighbor_radius = 1.5
 
     # только в таком порядке
-    phases_dict["instance_idx"] = [0, 199, 199+56]
+    phases_dict["instance_idx"] = [0, 200, 200+56]
     phases_dict["root_num"] = [[], []]
     phases_dict["instance"] = ['dust', 'air_rigid']
     phases_dict["material"] = ['dust', 'air_rigid']
@@ -252,9 +246,9 @@ elif args.env == 'DustBox':
     args.outf = 'dump_DustBox/' + args.outf
 
 else:
-    raise AssertionError("Unsupported env")
-
-
+    raise AssertionError("Unsupported env")  
+   
+    
 args.outf = args.outf + '_' + args.env
 args.dataf = 'data/' + args.dataf + '_' + args.env
 
@@ -271,112 +265,118 @@ for phase in ['train', 'valid']:
     else:
         datasets[phase].load_data(args.env)
 
+dataloaders = {x: torch.utils.data.DataLoader(
+                datasets[x], batch_size=args.batch_size,
+                shuffle=True if x == 'train' else False,
+                num_workers=args.num_workers,
+                collate_fn=collate_fn)
+                for x in ['train', 'valid']}
+        
 use_gpu = torch.cuda.is_available()
 print("use_gpu: ", use_gpu)
 
-dataloaders = {x: torch.utils.data.DataLoader(
-    datasets[x], batch_size=args.batch_size,
-    shuffle=True if x == 'train' else False,
-    num_workers=args.num_workers,
-    collate_fn=collate_fn)
-    for x in ['train', 'valid']}
-
-
 # define propagation network
 model = DPINet(args, datasets['train'].stat, phases_dict, residual=True, use_gpu=use_gpu)
-
-print("Number of parameters: %d" % count_parameters(model))
-
-if args.resume_epoch > 0 or args.resume_iter > 0:
-    model_path = os.path.join(args.outf, 'net_epoch_%d_iter_%d.pth' % (args.resume_epoch, args.resume_iter))
-    print("Loading saved ckp from %s" % model_path)
-    model.load_state_dict(torch.load(model_path))
-
-# criterion
-criterionMSE = nn.MSELoss()
 
 # optimizer
 optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
 scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.8, patience=3, verbose=True)
 
+print("Number of parameters: %d" % count_parameters(model))
+
+# criterion
+criterionMSE = nn.MSELoss()
+
 if use_gpu:
-    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # print(device)
-
-    # model= nn.DataParallel(model)
-    # model.to(device)
-
     model = model.cuda()
     criterionMSE = criterionMSE.cuda()
 
+if args.resume_epoch > 0 or args.resume_iter > 0:
+    model_path = os.path.join(args.outf, 'net_epoch_%d_iter_%d.pth' % (args.resume_epoch, args.resume_iter))
+    print("Loading saved ckp from %s" % model_path)
+    
+    checkpoint = torch.load(model_path)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+   
 st_epoch = args.resume_epoch if args.resume_epoch > 0 else 0
 best_valid_loss = np.inf
-for epoch in range(st_epoch, args.n_epoch):
 
+for epoch in range(st_epoch, args.n_epoch):
+    st_time = time.time()
+    
     phases = ['train', 'valid'] if args.eval == 0 else ['valid']
     for phase in phases:
-
+        
         model.train(phase=='train')
 
         losses = 0.
         for i, data in enumerate(dataloaders[phase]):
-            with torch.autograd.set_detect_anomaly(True, check_nan=True):
-                attr, state, rels, n_particles, n_shapes, instance_idx, label = data
-                Ra, node_r_idx, node_s_idx, pstep = rels[3], rels[4], rels[5], rels[6]
+            # with torch.autograd.set_detect_anomaly(True, check_nan=True):
+            attr, state, rels, n_particles, n_shapes, instance_idx, label = data
+            Ra, node_r_idx, node_s_idx, pstep = rels[3], rels[4], rels[5], rels[6]
 
-                Rr, Rs = [], []
-                for j in range(len(rels[0])):
-                    Rr_idx, Rs_idx, values = rels[0][j], rels[1][j], rels[2][j]
-                    Rr.append(torch.sparse.FloatTensor(
-                        Rr_idx, values, torch.Size([node_r_idx[j].shape[0], Ra[j].size(0)])))
-                    Rs.append(torch.sparse.FloatTensor(
-                        Rs_idx, values, torch.Size([node_s_idx[j].shape[0], Ra[j].size(0)])))
+            Rr, Rs = [], []
+            for j in range(len(rels[0])):
+                Rr_idx, Rs_idx, values = rels[0][j], rels[1][j], rels[2][j]
+                Rr.append(torch.sparse.FloatTensor(
+                    Rr_idx, values, torch.Size([node_r_idx[j].shape[0], Ra[j].size(0)])))
+                Rs.append(torch.sparse.FloatTensor(
+                    Rs_idx, values, torch.Size([node_s_idx[j].shape[0], Ra[j].size(0)])))
 
-                data = [attr, state, Rr, Rs, Ra, label]
+            data = [attr, state, Rr, Rs, Ra, label]
 
-                with torch.set_grad_enabled(phase=='train'):
-                    if use_gpu:
-                        for d in range(len(data)):
-                            if type(data[d]) == list:
-                                for t in range(len(data[d])):
-                                    data[d][t] = Variable(data[d][t].cuda())
-                            else:
-                                data[d] = Variable(data[d].cuda())
-                    else:
-                        for d in range(len(data)):
-                            if type(data[d]) == list:
-                                for t in range(len(data[d])):
-                                    data[d][t] = Variable(data[d][t])
-                            else:
-                                data[d] = Variable(data[d])
+            with torch.set_grad_enabled(phase=='train'):
+                if use_gpu:
+                    for d in range(len(data)):
+                        if type(data[d]) == list:
+                            for t in range(len(data[d])):
+                                data[d][t] = Variable(data[d][t].cuda())
+                        else:
+                            data[d] = Variable(data[d].cuda())
+                else:
+                    for d in range(len(data)):
+                        if type(data[d]) == list:
+                            for t in range(len(data[d])):
+                                data[d][t] = Variable(data[d][t])
+                        else:
+                            data[d] = Variable(data[d])
 
-                    attr, state, Rr, Rs, Ra, label = data
+                attr, state, Rr, Rs, Ra, label = data
 
-                    # st_time = time.time()
-                    # print("attr: ", attr.shape, "state: ", state.shape)
-                    predicted = model(
-                        attr, state, Rr, Rs, Ra, n_particles,
-                        node_r_idx, node_s_idx, pstep,
-                        instance_idx, phases_dict, args.verbose_model)
-                    # print('Time forward', time.time() - st_time)
+                # предсказание скоростей
+                predicted = model(
+                    attr, state, Rr, Rs, Ra, n_particles,
+                    node_r_idx, node_s_idx, pstep,
+                    instance_idx, phases_dict, args.verbose_model)
 
-                    # print(predicted.shape)
-                    # print(label.shape)
+            if args.env == "DustBox":                   
+                stat = dataloaders[phase].dataset.stat
+                prev_positions, next_gt_positions_normalised, next_gt_velocites_normalised = label
 
+                vels = denormalize([predicted], [stat[1]], True)[0]
+                predicted_positions = prev_positions + vels * args.dt
+                predicted_positions = normalize([predicted_positions], [stat[0]], True)[0]
+
+                position_loss = criterionMSE(predicted_positions, next_gt_positions_normalised)
+                velocity_loss = criterionMSE(predicted, next_gt_velocites_normalised)
+                loss = position_loss + velocity_loss
+            else:
                 loss = criterionMSE(predicted, label)
-                losses += np.sqrt(loss.item())
+            losses += np.sqrt(loss.item())
 
-                if phase == 'train':
-                    if i % args.forward_times == 0:
-                        # update parameters every args.forward_times
-                        if i != 0:
-                            loss_acc /= args.forward_times
-                            optimizer.zero_grad()
-                            loss_acc.backward()
-                            optimizer.step()
-                        loss_acc = loss
-                    else:
-                        loss_acc += loss
+            if phase == 'train':
+                if i % args.forward_times == 0:
+                    # update parameters every args.forward_times
+                    if i != 0:
+                        loss_acc /= args.forward_times
+                        optimizer.zero_grad()
+                        loss_acc.backward()
+                        optimizer.step()
+                    loss_acc = loss
+                else:
+                    loss_acc += loss
 
             if i % args.log_per_iter == 0:
                 n_relations = 0
@@ -385,18 +385,31 @@ for epoch in range(st_epoch, args.n_epoch):
                 print('%s [%d/%d][%d/%d] n_relations: %d, Loss: %.6f, Agg: %.6f' %
                       (phase, epoch, args.n_epoch, i, len(dataloaders[phase]),
                        n_relations, np.sqrt(loss.item()), losses / (i + 1)))
-                # torch.save(model.state_dict(), '%s/net_best.pth' % (args.outf))
 
-            if phase == 'train' and i > 0 and i % args.ckp_per_iter == 0:
-                torch.save(model.state_dict(), '%s/net_epoch_%d_iter_%d.pth' % (args.outf, epoch, i))
+            if phase == 'train' and i > 0 and i % args.ckp_per_iter == 0:               
+                torch.save({
+                            'epoch': epoch,
+                            'model_state_dict': model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'scheduler_state_dict': scheduler.state_dict()
+                            }, '%s/net_epoch_%d_iter_%d.pth' % (args.outf, epoch, i))
             
         losses /= len(dataloaders[phase])
-        print('%s [%d/%d] Loss: %.4f, Best valid: %.4f' %
-              (phase, epoch, args.n_epoch, losses, best_valid_loss))
+        print('%s [%d/%d] Loss: %.4f, Best valid: %.4f, Learning rate: %f \n' %
+              (phase, epoch, args.n_epoch, losses, best_valid_loss, optimizer.param_groups[0]['lr']))
+        with open("loss_history.txt", "a") as f:
+            f.write('%s [%d/%d] Loss: %.4f, Best valid: %.4f, Learning rate: %f \n' %
+                  (phase, epoch, args.n_epoch, losses, best_valid_loss, optimizer.param_groups[0]['lr']))
 
-        if phase == 'valid':
+        if phase == 'valid':          
             scheduler.step(losses)
             if(losses < best_valid_loss):
-                best_valid_loss = losses
-                torch.save(model.state_dict(), '%s/net_best.pth' % (args.outf))
+                best_valid_loss = losses                
+                torch.save({
+                            'epoch': epoch,
+                            'model_state_dict': model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'scheduler_state_dict': scheduler.state_dict()
+                            },  '%s/net_best.pth' % (args.outf))
         
+    print('Epoch ', epoch, ' time:', time.time() - st_time)

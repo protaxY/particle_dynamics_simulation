@@ -21,7 +21,6 @@ from utils import rand_float, rand_int
 from utils import sample_control_RiceGrip, calc_shape_states_RiceGrip
 from utils import calc_box_init_FluidShake, calc_shape_states_FluidShake
 
-
 def collate_fn(data):
     return data[0]
 
@@ -188,7 +187,6 @@ def gen_PyFleX(info):
             clusters = []
             st_time = time.time()
             kmeans = MiniBatchKMeans(n_clusters=root_num[0][0], random_state=0).fit(p)
-            # print('Time on kmeans', time.time() - st_time)
             clusters.append([[kmeans.labels_]])
             # centers = kmeans.cluster_centers_
 
@@ -200,7 +198,6 @@ def gen_PyFleX(info):
                 # apply rigid projection to ground truth
                 XX = ref_rigid
                 YY = positions[j, :64]
-                # print("MSE init", np.mean(np.square(XX - YY)))
 
                 X = XX.copy().T
                 Y = YY.copy().T
@@ -216,7 +213,6 @@ def gen_PyFleX(info):
                 t = mean_Y - np.dot(R, mean_X)
 
                 YY_fitted = (np.dot(R, XX.T) + t).T
-                # print("MSE fit", np.mean(np.square(YY_fitted - YY)))
 
                 positions[j, :64] = YY_fitted
 
@@ -255,9 +251,6 @@ def gen_PyFleX(info):
 
             n_particles = pyflex.get_n_particles()
             n_shapes = pyflex.get_n_shapes()
-
-            # print("n_particles", n_particles)
-            # print("n_shapes", n_shapes)
 
             positions = np.zeros((time_step, n_particles + n_shapes, 3), dtype=np.float32)
             velocities = np.zeros((time_step, n_particles + n_shapes, 3), dtype=np.float32)
@@ -341,9 +334,7 @@ def gen_PyFleX(info):
                 p = pyflex.get_positions().reshape(-1, 4)[:, :3]
 
                 clusters = []
-                st_time = time.time()
                 kmeans = MiniBatchKMeans(n_clusters=root_num[0][0], random_state=0).fit(p)
-                # print('Time on kmeans', time.time() - st_time)
                 clusters.append([[kmeans.labels_]])
                 # centers = kmeans.cluster_centers_
 
@@ -368,7 +359,7 @@ def gen_PyFleX(info):
                 data = [positions[j], velocities[j], shape_quats[j], clusters, scene_params]
                 store_data(data_names, data, os.path.join(rollout_dir, str(j) + '.h5'))
 
-        elif args.env == 'DustBox':
+        elif env == 'DustBox':
             raise AssertionError("DustBox is unsupported env")
         
         else:
@@ -409,7 +400,7 @@ def find_relations_neighbor(positions, query_idx, anchor_idx, radius, order, var
     pos = positions.data.cpu().numpy() if var else positions
 
     point_tree = spatial.cKDTree(pos[anchor_idx])
-    neighbors = point_tree.query_ball_point(pos[query_idx], radius, p=order)
+    neighbors = point_tree.query_ball_point(pos[query_idx], radius, p=order, workers=-1)
 
     '''
     for i in range(len(neighbors)):
@@ -725,11 +716,9 @@ def prepare_input(data, stat, args, phases_dict, verbose=0, var=False):
         else:
             raise AssertionError("Unsupported materials")
 
-        # st_time = time.time()
         pos = positions
         pos = pos[:, -3:]
         rels += find_relations_neighbor(pos, queries, anchors, args.neighbor_radius, 2, var)
-        # print("Time on neighbor search", time.time() - st_time)
 
     if verbose:
         print("Attr shape (after add env specific graph components):", attr.shape)
@@ -739,8 +728,6 @@ def prepare_input(data, stat, args, phases_dict, verbose=0, var=False):
     if rels.shape[0] > 0:
         if verbose:
             print("Relations neighbor", rels.shape)
-        # Rr_idxs.append(torch.LongTensor([rels[:, 0].astype(int), np.arange(rels.shape[0])]))
-        # Rs_idxs.append(torch.LongTensor([rels[:, 1].astype(int), np.arange(rels.shape[0])]))
         Rr_idxs.append(torch.LongTensor(np.array([rels[:, 0].astype(int), np.arange(rels.shape[0])])))
         Rs_idxs.append(torch.LongTensor(np.array([rels[:, 1].astype(int), np.arange(rels.shape[0])])))
         Ra = np.zeros((rels.shape[0], args.relation_dim))
@@ -818,8 +805,6 @@ def prepare_input(data, stat, args, phases_dict, verbose=0, var=False):
             quat_null = np.array([[0., 0., 0., 0.]])
             quats = np.repeat(quat_null, [count_nodes], axis=0)
             quats[n_particles:n_particles + n_shapes] = shape_quats
-            # if args.eval == 0:
-            # quats += np.random.randn(quats.shape[0], 4) * 0.05
             state = torch.FloatTensor(np.concatenate([positions, velocities, quats], axis=1))
     else:
         if var:
@@ -877,7 +862,6 @@ class PhysicsFleXDataset(Dataset):
         self.stat = load_data(self.data_names[:2], self.stat_path)
         for i in range(len(self.stat)):
             self.stat[i] = self.stat[i][-self.args.position_dim:, :]
-            # print(self.data_names[i], self.stat[i].shape)
 
     def gen_data(self, name):
         # if the data hasn't been generated, generate the data
@@ -960,7 +944,9 @@ class PhysicsFleXDataset(Dataset):
         label = None
         if self.args.env == "DustBox":
             # что я делаю???
-            label = torch.FloatTensor(data_nxt[1][:self.phases_dict["instance_idx"][1]])
+            label = [torch.FloatTensor(data[0][:self.phases_dict["instance_idx"][1]]),
+                     torch.FloatTensor(data_nxt[0][:self.phases_dict["instance_idx"][1]]), 
+                     torch.FloatTensor(data_nxt[1][:self.phases_dict["instance_idx"][1]])]
         else:
             label = torch.FloatTensor(data_nxt[1][:n_particles])
 

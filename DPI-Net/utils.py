@@ -68,8 +68,6 @@ def visualize_point_clouds(point_clouds, c=['b', 'r'], view=None, store=False, s
     ax.view_init(view[0], view[1])
     plt.show()
 
-    # plt.pause(5)
-
     if store:
         fig.savefig(store_path, bbox_inches='tight')
 
@@ -117,7 +115,6 @@ def quatFromAxisAngle_var(axis, angle):
     axis *= sin_theta_over_two
 
     quat = torch.cat([axis, w])
-    # print("quat size", quat.size())
 
     return quat
 
@@ -183,10 +180,6 @@ def calc_shape_states_RiceGrip_var(t, dt, gripper_config):
     y = Variable(torch.FloatTensor([0.6]).cuda())
     states_0 = torch.cat([e_0_curr[0:1], y, e_0_curr[1:2], e_0_last[0:1], y, e_0_last[1:2], quat, quat])
     states_1 = torch.cat([e_1_curr[0:1], y, e_1_curr[1:2], e_1_last[0:1], y, e_1_last[1:2], quat, quat])
-
-    # print(states_0.requires_grad, states_1.requires_grad)
-    # print("gripper #0:", states_0.size())
-    # print("gripper #1:", states_1.size())
 
     return torch.cat([states_0.view(1, -1), states_1.view(1, -1)], 0)
 
@@ -278,7 +271,6 @@ def calc_shape_states_FluidShake_var(x_curr, x_last, box_dis, height, border):
         quat, quat]).view(1, -1)
 
     states = torch.cat([state_0, state_1, state_2, state_3, state_4], 0)
-    # print("states size", states.size())
 
     return states
 

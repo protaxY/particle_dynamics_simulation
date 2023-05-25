@@ -6,7 +6,6 @@ from torchvision import models
 from torch.autograd import Variable
 from torch.nn import functional as F
 
-
 ### Dynamic Particle Interaction Networks
 
 class RelationEncoder(nn.Module):
@@ -15,6 +14,10 @@ class RelationEncoder(nn.Module):
 
         self.model = nn.Sequential(
             nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
@@ -39,6 +42,10 @@ class ParticleEncoder(nn.Module):
         self.model = nn.Sequential(
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
             nn.Linear(hidden_size, output_size),
             nn.ReLU()
         )
@@ -50,7 +57,6 @@ class ParticleEncoder(nn.Module):
         Returns:
             [n_particles, output_size]
         '''
-        # print(x.size())
         return self.model(x)
 
 
@@ -84,7 +90,9 @@ class ParticlePredictor(nn.Module):
 
         self.linear_0 = nn.Linear(input_size, hidden_size)
         self.linear_1 = nn.Linear(hidden_size, hidden_size)
-        self.linear_2 = nn.Linear(hidden_size, output_size)
+        self.linear_2 = nn.Linear(hidden_size, hidden_size)
+        self.linear_3 = nn.Linear(hidden_size, hidden_size)
+        self.linear_4 = nn.Linear(hidden_size, output_size)
         self.relu = nn.ReLU()
 
     def forward(self, x):
@@ -96,8 +104,10 @@ class ParticlePredictor(nn.Module):
         '''
         x = self.relu(self.linear_0(x))
         x = self.relu(self.linear_1(x))
+        x = self.relu(self.linear_2(x))
+        x = self.relu(self.linear_3(x))
 
-        return self.linear_2(x)
+        return self.linear_4(x)
 
 
 class DPINet(nn.Module):
@@ -138,12 +148,6 @@ class DPINet(nn.Module):
         # (1) particle attr (2) state
         self.particle_encoder_list = nn.ModuleList()
         for i in range(args.n_stages):
-            # print(attr_dim + state_dim * 2)
-            # print("___________________________________________________")
-            # print(attr_dim)
-            # print(state_dim)
-            # print(attr_dim + state_dim * 2)
-            # print("___________________________________________________")
             self.particle_encoder_list.append(
                
                 ParticleEncoder(attr_dim + state_dim * 2, nf_particle, nf_effect))
@@ -182,6 +186,7 @@ class DPINet(nn.Module):
         if self.use_gpu:
             one = Variable(torch.ones(1, 1)).cuda()
             zero = Variable(torch.zeros(1, 1)).cuda()
+            
         else:
             one = Variable(torch.ones(1, 1))
             zero = Variable(torch.zeros(1, 1))
@@ -258,6 +263,7 @@ class DPINet(nn.Module):
             for i in range(pstep[s]):
                 if verbose:
                     print("pstep", i)
+                    print('attr_r', attr_r.shape, 'state_r', state_r.shape)
                     print("Receiver index range", np.min(node_r_idx[s]), np.max(node_r_idx[s]))
                     print("Sender index range", np.min(node_s_idx[s]), np.max(node_s_idx[s]))
 
@@ -306,9 +312,6 @@ class DPINet(nn.Module):
 
             elif phases_dict['material'][i] == "dust":
                 pred.append(self.dust_particle_predictor(particle_effect[st:ed]))
-
-            # elif phases_dict['material'][i] == "air_rigid":
-                # pass
 
         pred = torch.cat(pred, 0)
 

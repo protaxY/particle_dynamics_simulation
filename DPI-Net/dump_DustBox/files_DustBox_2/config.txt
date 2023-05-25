@@ -1,0 +1,36 @@
+# используется для генерации
+args.n_rollout = 50
+args.n_his = 10
+
+# object states:
+# [x, y, xdot, ydot]
+args.state_dim = 2 + 2 + 2 * args.n_his
+args.position_dim = 2
+
+args.dt = 1./30.
+
+# object attr:
+# [dust, air_effector]
+args.attr_dim = 2
+
+# relation attr:
+# [none]
+args.relation_dim = 1
+
+args.time_step = 501
+# используется для генерации
+# args.time_step_clip = 0
+args.n_instance = 2
+
+# ???
+args.n_stages = 4
+
+args.neighbor_radius = 1.0
+
+# только в таком порядке
+phases_dict["instance_idx"] = [0, 200, 200+56]
+phases_dict["root_num"] = [[], []]
+phases_dict["instance"] = ['dust', 'air_rigid']
+phases_dict["material"] = ['dust', 'air_rigid']
+
+args.outf = 'dump_DustBox/' + args.outf
